@@ -116,7 +116,7 @@ bool Configuration::readConfigFile(const char *path) {
             }
           } else if (parsePortRange(s, &p_r)) {  // Might be a port range
             addPortRange(p_r);
-            trace->traceEvent(TRACE_INFO, "Added range...");
+            // trace->traceEvent(TRACE_INFO, "Added range..."); 
           }
         } else  {   // Single port
           hp_ports[honeypot_field.asUInt()] = true; 
