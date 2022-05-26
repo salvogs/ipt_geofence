@@ -85,6 +85,8 @@ NwInterface::~NwInterface() {
   if(nfHandle)    nfq_close(nfHandle);
   if(conf)        { delete conf; }
 
+  printStats();
+
   nf_fd = 0;
 }
 
@@ -178,6 +180,8 @@ Marker NwInterface::dissectPacket(const u_char *payload, u_int payload_len) {
   /* We can see only IP addresses */
   u_int16_t ip_offset = 0, vlan_id = 0 /* FIX */;
 
+  clock_t begin = clock();
+  n_pkts++;
   if (payload_len >= ip_offset) {
     struct iphdr *iph = (struct iphdr *)&payload[ip_offset];
     bool ipv4 = false, ipv6 = false;
@@ -202,8 +206,10 @@ Marker NwInterface::dissectPacket(const u_char *payload, u_int payload_len) {
       u_int8_t frag_off = ntohs(iph->frag_off);
       struct in_addr a;
 
-      if ((iph->protocol == IPPROTO_UDP) && ((frag_off & 0x3FFF /* IP_MF | IP_OFFSET */) != 0))
+      if ((iph->protocol == IPPROTO_UDP) && ((frag_off & 0x3FFF /* IP_MF | IP_OFFSET */) != 0)) {
+        clock_verdict += (clock() - begin);
         return (conf->getMarkerUnknown()); /* Don't block it */
+      }
 
       // get protocol and offset
       proto = iph->protocol;
@@ -212,6 +218,7 @@ Marker NwInterface::dissectPacket(const u_char *payload, u_int payload_len) {
       a.s_addr = iph->saddr, inet_ntop(AF_INET, &a, src, sizeof(src));
       a.s_addr = iph->daddr, inet_ntop(AF_INET, &a, dst, sizeof(dst));
     } else { // Neither ipv4 or ipv6...unlikely to be evaluated
+      clock_verdict += (clock() - begin);
       return (conf->getMarkerPass());
     }
 
@@ -231,11 +238,13 @@ Marker NwInterface::dissectPacket(const u_char *payload, u_int payload_len) {
       src_port = dst_port = 0;
     }
 
-    return (makeVerdict(proto, vlan_id,
+    Marker toRet = makeVerdict(proto, vlan_id,
                         src_port, dst_port,
-                        src,dst, ipv4,ipv6));
+                        src,dst, ipv4,ipv6);
+    clock_verdict += (clock() - begin);
+    return (toRet);
   }
-
+  clock_verdict += (clock() - begin);
   return (conf->getMarkerPass());
 }
 
@@ -429,6 +438,7 @@ Marker NwInterface::makeVerdict(u_int8_t proto, u_int16_t vlanId,
 
   m = src_marker = dst_marker = conf->getDefaultPolicy();
 
+  clock_t begin = !saddr_private ? clock() : 0;
   /* Step 3 - For monitored TCP/UDP ports (and ICMP) check the country blacklist */
   if((!saddr_private) && (geoip->lookup(src_host, src_ctry, sizeof(src_ctry), src_cont, sizeof(src_cont)))) {
     src_marker = conf->getMarker(src_ctry,src_cont);
@@ -437,7 +447,10 @@ Marker NwInterface::makeVerdict(u_int8_t proto, u_int16_t vlanId,
     /* Unknown or private IP address  */
     src_marker = conf->getMarkerPass();
   }
+  clock_geolookup += !saddr_private ? (clock() - begin) : 0;
+  n_lookups += !saddr_private ? 1 : 0;
 
+begin = !daddr_private ? clock() : 0;
   if((!daddr_private) && (geoip->lookup(dst_host, dst_ctry, sizeof(dst_ctry), dst_cont, sizeof(dst_cont)))) {
     dst_marker = conf->getMarker(dst_ctry, dst_cont);
     pass_local = false;
@@ -445,6 +458,9 @@ Marker NwInterface::makeVerdict(u_int8_t proto, u_int16_t vlanId,
     /* Unknown or private IP address  */
     dst_marker = conf->getMarkerPass();
   }
+  clock_geolookup += !daddr_private ? (clock() - begin) : 0;
+  n_lookups += !daddr_private ? 1 : 0;
+
 
   /* Final step: compute the flow verdict */
 
@@ -571,5 +587,20 @@ void NwInterface::honeyHarvesting(int n){
   }
   if(++x != n) // avoid trace flooding
     trace->traceEvent(TRACE_NORMAL," Banned hosts harvesting -> %d entries erased || %lu currently banned hosts\n", n-x, honey_banned_time.size());
+
+}
+
+void NwInterface::printStats() {
+  double
+    time_verdict = clock_verdict / CLOCKS_PER_SEC,
+    time_geolookup = clock_geolookup / CLOCKS_PER_SEC;
+  
+  printf(
+    "\t\t TOTAL | PER PKT\n"
+    "Verdict   %fs | %fs\n"
+    "geoLookup %fs | %fs\n",
+    time_verdict, time_verdict / n_pkts,
+    time_geolookup, time_geolookup / n_lookups
+    );
 
 }
