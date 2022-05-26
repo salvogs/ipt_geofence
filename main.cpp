@@ -49,7 +49,7 @@ void sigproc(int sig) {
 static void help() {
   printf("Welcome to ipt_geofence v.%s\n", version);
   printf("Copyright 2021-22 ntop.org\n");
-  
+
   printf("\nUsage:\n");
   printf("ipt_geofence [-h][-v][-s] -c <config file> -m <city>\n\n");
   printf("-h           | Print this help\n");
@@ -59,7 +59,7 @@ static void help() {
   printf("-m <city>    | Local mmdb_city MMDB file\n");
 
   printf("\nExample: ipt_geofence -c sample_config.json -m dbip-country-lite.mmdb\n");
-  
+
   exit(0);
 }
 
@@ -68,6 +68,7 @@ static void help() {
 
 int main(int argc, char *argv[]) {
   u_char c;
+  std::string confPath = "";
   const struct option long_options[] = {
     { "config",      required_argument,    NULL, 'c' },
     { "mmdb_city",   required_argument,    NULL, 'm' },
@@ -77,21 +78,23 @@ int main(int argc, char *argv[]) {
     /* End of options */
     { NULL,          no_argument,          NULL,  0 }
   };
-  Configuration config;
+  Configuration *config;
   GeoIP geoip;
-  
+
   trace = new Trace();
+  config = new Configuration();
 
   while((c = getopt_long(argc, argv, "c:u:l:m:svVh", long_options, NULL)) != 255) {
     switch(c) {
     case 'c':
-      config.readConfigFile(optarg);
+      confPath = (optarg);
+      config->readConfigFile(confPath.c_str());
       break;
-      
+
     case 'm':
       geoip.loadCountry(optarg);
       break;
-      
+
     case 's':
       trace->traceToSyslogOnly();
       break;
@@ -102,31 +105,30 @@ int main(int argc, char *argv[]) {
 
     default:
       trace->traceEvent(TRACE_WARNING, "Unknown command line option -%c", c);
-      help();      
+      help();
     }
   }
 
-  Blacklists b;
-  b.loadIPsetFromFile((char*)"dshield_7d.netset");
-
-  if(!config.isConfigured()) {
+  if(!config->isConfigured()) {
     trace->traceEvent(TRACE_ERROR, "Please check the JSON configuration file");
     help();
   } else if(!geoip.isLoaded()) {
     trace->traceEvent(TRACE_ERROR, "Please check the GeoIP configuration");
     help();
   }
-  
+
   signal(SIGTERM, sigproc);
+  signal(SIGINT,  sigproc);
 
   try {
-    iface = new NwInterface(config.getQueueId(), &config, &geoip);
-    
+    iface = new NwInterface(config->getQueueId(), config, &geoip, confPath);
+
     iface->packetPollLoop();
+
     delete iface;
   } catch(int err) {
     trace->traceEvent(TRACE_ERROR, "Interface creation error: please fix the reported errors and try again");
   }
-    
+
   return(0);
 }
